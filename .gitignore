@@ -1,0 +1,24 @@
+# cache
+__pycache__/
+*.pyc
+
+# checkpoints
+code/checkpoints/
+
+# datasets
+code/dataset/
+
+# idea
+.idea/
+
+# virtual environment
+.venv
+
+# input and output files
+code/input/
+code/output/
+
+*.pth
+*.pt
+*.csv
+*.log
