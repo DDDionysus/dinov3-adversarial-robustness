@@ -201,21 +201,36 @@ class PerturbationShardWriter:
         self.shard_size = shard_size
         self._buffer: list[tuple[np.ndarray, dict]] = []
         self._keys: set[str] = set()
+        self._locations: dict[str, tuple[Path, int]] = {}
         self._next_index = 0
         pattern = re.compile(rf"{re.escape(prefix)}-([0-9]{{6}})\.npz")
         for path in self.directory.glob(f"{prefix}-*.npz"):
             match = pattern.fullmatch(path.name)
             if match:
                 self._next_index = max(self._next_index, int(match.group(1)) + 1)
-                for record in load_shard_metadata(path):
+                for offset, record in enumerate(load_shard_metadata(path)):
                     key = record["attack_key"]
                     if key in self._keys:
                         raise ValueError(f"Duplicate attack key in existing shards: {key}")
                     self._keys.add(key)
+                    self._locations[key] = (path, offset)
 
     def contains(self, x_clean, metadata: dict) -> bool:
         """Check for completed attacks before doing a costly forward/backward pass."""
         return attack_key_for_input(x_clean, metadata) in self._keys
+
+    def load(self, attack_key: str) -> tuple[dict, np.ndarray]:
+        """Read an already committed attack by key, without regeneration.
+
+        Buffered attacks are not durable; callers must flush before replay.
+        """
+        if attack_key not in self._locations:
+            raise KeyError(f"Attack not committed in this prefix: {attack_key}")
+        path, offset = self._locations[attack_key]
+        record, q = load_shard(path)[offset]
+        if record.get("attack_key") != attack_key:
+            raise ValueError("Archive attack index mismatch")
+        return record, q
 
     def add(self, x_clean, x_adv, metadata: dict) -> bool:
         """Add a new attack, returning False when already archived."""
@@ -254,6 +269,8 @@ class PerturbationShardWriter:
             os.link(temporary, destination)
         finally:
             Path(temporary).unlink(missing_ok=True)
+        for offset, record in enumerate(records):
+            self._locations[record["attack_key"]] = (destination, offset)
         self._next_index += 1
         self._buffer.clear()
         return destination
