@@ -83,6 +83,8 @@ def load_dinov3(model_name, device, checkpoint_path=None):
 
     model = model.to(device)
     model.eval()
+    # Keep parameters fixed while allowing gradients with respect to the input.
+    model.requires_grad_(False)
 
     return model
 
@@ -110,5 +112,7 @@ def load_dinov3_downstream(task, device):
 
     model = model.to(device)
     model.eval()
+    # Keep parameters fixed while allowing gradients with respect to the input.
+    model.requires_grad_(False)
 
     return model
