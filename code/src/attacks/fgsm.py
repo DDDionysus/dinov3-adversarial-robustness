@@ -51,16 +51,14 @@ def fgsm_attack(model, normalisation, x, epsilon, objective="cls"):
     else:
         raise ValueError(f"Unknown attack objective: {objective}")
 
-    loss.backward()
-
-    grad = x_adv.grad
+    grad = torch.autograd.grad(loss, x_adv)[0]
 
     print("Loss:", loss.item())
     print("Grad abs mean:", grad.abs().mean().item())
     print("Grad abs max:", grad.abs().max().item())
     print("Nonzero grad:", (grad != 0).float().mean().item())
 
-    perturbation = epsilon * x_adv.grad.sign()
+    perturbation = epsilon * grad.sign()
 
     # minimise cosine similarity or maximise mse
     x_adv = x_adv + direction * perturbation
@@ -124,9 +122,9 @@ def rfgsm_attack(model, normalisation, x, epsilon, seed, objective="cls"):
     else:
         raise ValueError(f"Unknown attack objective: {objective}")
 
-    loss.backward()
+    grad = torch.autograd.grad(loss, x_adv)[0]
 
-    perturbation = epsilon * x_adv.grad.sign()
+    perturbation = epsilon * grad.sign()
 
     # minimise cosine similarity or maximise mse
     x_adv = x_adv + direction * perturbation

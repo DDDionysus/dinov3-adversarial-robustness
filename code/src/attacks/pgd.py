@@ -62,10 +62,10 @@ def pgd_attack(model, normalisation, x, epsilon, alpha, steps, seed, objective="
         else:
             raise ValueError(f"Unknown attack objective: {objective}")
 
-        loss.backward()
+        grad = torch.autograd.grad(loss, x_adv)[0]
 
         # minimise similarity
-        perturbation = alpha * x_adv.grad.sign()
+        perturbation = alpha * grad.sign()
 
         x_adv = x_adv + direction * perturbation
 

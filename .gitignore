@@ -22,3 +22,6 @@ code/output/
 *.pt
 *.csv
 *.log
+
+# Local-only regression tests
+tests/
