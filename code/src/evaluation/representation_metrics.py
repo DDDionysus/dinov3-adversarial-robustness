@@ -7,8 +7,9 @@ The metrics use the original conventions in src.utils.metrics:
   - Normalized Gram difference: Frobenius norm of the OFF-DIAGONAL
     difference, divided by the Frobenius norm of the clean off-diagonal.
 
-Only scalar summaries are returned; no token arrays or Gram matrices are
-saved. This function is for one image at a time, not a dataset-wide mean.
+By default only scalar summaries are returned. With return_spatial_maps=True,
+also return compact per-patch similarity and Gram-row RMS maps; full Gram
+matrices and embeddings are never persisted. One image per invocation.
 """
 
 from __future__ import annotations
@@ -25,7 +26,9 @@ def representation_metrics(
     clean_patch: torch.Tensor,
     adv_cls: torch.Tensor,
     adv_patch: torch.Tensor,
-) -> dict[str, float | int]:
+    *,
+    return_spatial_maps: bool = False,
+) -> dict[str, float | int] | tuple[dict[str, float | int], dict[str, np.ndarray]]:
     """Compute robustness metrics from extracted DINO features for B=1.
 
     Shapes: CLS [1, D_cls], patch [1, P, D_patch] with P >= 2.
@@ -37,6 +40,12 @@ def representation_metrics(
     default (sample std, N-1). Percentiles use NumPy's linear interpolation.
     For numerical stability, similarities/Gram metrics are computed in float32.
     No model gradients are needed for metric evaluation.
+
+    If return_spatial_maps=True, infer the native square patch grid from P.
+    Non-square patch layouts must be handled explicitly in a future protocol;
+    reshaping solely by an assumed image size would misplace patches.
+    Gram-row RMS includes the diagonal and uses a divisor of P, whereas
+    scalar gram_diff_norm excludes diagonals (the legacy definition).
     """
     pairs = ((clean_cls, adv_cls, 2, "CLS"),
              (clean_patch, adv_patch, 3, "patch"))
@@ -55,6 +64,13 @@ def representation_metrics(
         raise ValueError("Feature dimension must be nonempty")
     if clean_patch.shape[1] < 2:
         raise ValueError("At least two patch tokens are required for off-diagonal Gram metrics")
+
+    if not isinstance(return_spatial_maps, bool):
+        raise TypeError("return_spatial_maps must be a boolean")
+    if return_spatial_maps:
+        grid_size = int(np.sqrt(clean_patch.shape[1]))
+        if grid_size * grid_size != clean_patch.shape[1]:
+            raise ValueError("Spatial maps require a square patch grid")
 
     with torch.no_grad():
         # float32 also avoids large fp16 roundoff in similarity / Gram scores.
@@ -80,7 +96,16 @@ def representation_metrics(
         denominator = torch.linalg.vector_norm(gram_clean[:, off_diag], dim=-1)
         gram_diff_norm = (numerator / (denominator + 1e-8)).mean()
 
-    return {
+        if return_spatial_maps:
+            # Reuse the SAME patch cosines and Gram difference as scalars.
+            # Per-patch RMS of changed relationships: sqrt(mean_q ΔG_pq²).
+            gram_row_rmse = gram_delta[0].square().mean(dim=-1).sqrt()
+            spatial = {
+                "patch_similarity": patch_cos.reshape(grid_size, grid_size).detach().cpu().numpy().copy(),
+                "gram_row_rmse": gram_row_rmse.reshape(grid_size, grid_size).detach().cpu().numpy().copy(),
+            }
+
+    values = {
         "cls_similarity": float(cls_cos.item()),
         "patch_similarity_mean": float(scores.mean()),
         "patch_similarity_std": float(scores.std(ddof=1)),
@@ -95,3 +120,4 @@ def representation_metrics(
         "gram_mse": float(gram_mse.item()),
         "gram_diff_norm": float(gram_diff_norm.item()),
     }
+    return (values, spatial) if return_spatial_maps else values
