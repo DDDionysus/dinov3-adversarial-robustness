@@ -18,6 +18,7 @@ attack and re-use the same manifest, preprocessing, metadata and prefix.
 
 from __future__ import annotations
 
+from copy import deepcopy
 import hashlib
 import json
 import math
@@ -202,6 +203,11 @@ class PerturbationShardWriter:
         self._buffer: list[tuple[np.ndarray, dict]] = []
         self._keys: set[str] = set()
         self._locations: dict[str, tuple[Path, int]] = {}
+        # One bounded cache avoids decompressing the same 24-attack shard
+        # on every replay. Previously, batching would multiply decompression
+        # and scratch I/O by the number of attacks in each shard.
+        self._read_cache_path: Path | None = None
+        self._read_cache_records: list[tuple[dict, np.ndarray]] | None = None
         self._next_index = 0
         pattern = re.compile(rf"{re.escape(prefix)}-([0-9]{{6}})\.npz")
         for path in self.directory.glob(f"{prefix}-*.npz"):
@@ -227,10 +233,14 @@ class PerturbationShardWriter:
         if attack_key not in self._locations:
             raise KeyError(f"Attack not committed in this prefix: {attack_key}")
         path, offset = self._locations[attack_key]
-        record, q = load_shard(path)[offset]
+        if self._read_cache_path != path:
+            self._read_cache_records = load_shard(path)
+            self._read_cache_path = path
+        record, q = self._read_cache_records[offset]
         if record.get("attack_key") != attack_key:
             raise ValueError("Archive attack index mismatch")
-        return record, q
+        # Consumers may manipulate decoded deltas; never expose cached buffers.
+        return deepcopy(record), q.copy()
 
     def add(self, x_clean, x_adv, metadata: dict) -> bool:
         """Add a new attack, returning False when already archived."""
@@ -273,6 +283,8 @@ class PerturbationShardWriter:
             self._locations[record["attack_key"]] = (destination, offset)
         self._next_index += 1
         self._buffer.clear()
+        self._read_cache_path = None
+        self._read_cache_records = None
         return destination
 
     def __enter__(self):

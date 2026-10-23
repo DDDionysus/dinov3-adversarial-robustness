@@ -214,6 +214,9 @@ def execute(args: argparse.Namespace) -> dict:
     """Validate frozen inputs and run one deterministic partition."""
     if args.max_samples is not None and args.max_samples < 1:
         raise ValueError("max_samples must be positive")
+    if (isinstance(args.attack_shard_size, bool) or args.attack_shard_size < 1 or
+            isinstance(args.map_shard_size, bool) or args.map_shard_size < 1):
+        raise ValueError("Archive shard sizes must be positive integers")
     manifest = _read_json(args.manifest)
     provenance = _read_json(args.provenance)
     verify_manifest(manifest)
@@ -265,10 +268,10 @@ def execute(args: argparse.Namespace) -> dict:
         with ExitStack() as stack:
             # No shared writer paths across workers. Fixed worker ID on restart.
             attacks = stack.enter_context(PerturbationShardWriter(
-                worker / "attacks", prefix="attack", shard_size=1))
+                worker / "attacks", prefix="attack", shard_size=args.attack_shard_size))
             metrics = stack.enter_context(MetricJSONLWriter(worker / "metrics.jsonl"))
             maps = stack.enter_context(SpatialMapShardWriter(
-                worker / "spatial_maps", prefix="map", shard_size=1))
+                worker / "spatial_maps", prefix="map", shard_size=args.map_shard_size))
             result = run_verified_representation_samples(
                 model=model, manifest=manifest, dataset_root=args.dataset_root,
                 manifest_role=args.manifest_role, checkpoint_role=args.checkpoint_role,
@@ -304,6 +307,11 @@ def build_parser() -> argparse.ArgumentParser:
                         help="Limit samples per partition for small smoke tests")
     parser.add_argument("--max-conditions", type=int, default=None,
                         help="Use first N frozen attacks for small smoke tests")
+    parser.add_argument("--attack-shard-size", type=int, default=1,
+                        help="Int8 attacks per atomic shard; 1 maximizes immediate durability, "
+                             "24 reduces filesystem pressure for production")
+    parser.add_argument("--map-shard-size", type=int, default=1,
+                        help="Spatial maps per atomic shard; missing buffered maps are replayable")
     parser.add_argument("--verify-only", action="store_true",
                         help="Verify frozen source files and checkpoint; do not load model or write outputs")
     return parser
