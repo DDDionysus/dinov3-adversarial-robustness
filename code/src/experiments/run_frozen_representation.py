@@ -147,6 +147,23 @@ def _validate_checkpoint(checkpoint: Path, provenance: dict, role: str,
     return path
 
 
+def _verify_model_source_revision(provenance: dict, model_name: str) -> None:
+    """Validate the exact local source the Hub loader will execute.
+
+    Caller must already be inside _configured_local_source, which forbids a
+    GitHub download fallback. This check runs even in --verify-only mode.
+    """
+    project = "dinov2" if model_name.startswith("dinov2") else "dinov3"
+    revisions = provenance.get("model_source_revisions")
+    expected = revisions.get(project) if isinstance(revisions, dict) else None
+    if not isinstance(expected, str) or re.fullmatch(r"[0-9a-f]{40,64}", expected) is None:
+        raise ValueError(f"Missing pinned official {project} source revision")
+    checkout = Path(hub_source_kwargs(project)["repo_or_dir"])
+    actual = _git_revision(checkout)
+    if actual != expected:
+        raise ValueError(f"Official {project} source revision differs from frozen provenance")
+
+
 def _verify_git_revision(provenance: dict) -> None:
     repo_root = Path(__file__).resolve().parents[3]
     if _git_revision(repo_root) != provenance.get("git_revision"):
@@ -206,6 +223,10 @@ def execute(args: argparse.Namespace) -> dict:
                       checkpoint_role=args.checkpoint_role,
                       preprocessing=provenance.get("preprocessing"))
     _verify_git_revision(provenance)
+    # Check what torch.hub will actually execute, including on verify-only
+    # runs, before hashing large checkpoint files or constructing any model.
+    with _configured_local_source(args.hub_root, args.model):
+        _verify_model_source_revision(provenance, args.model)
     source_paths = _source_paths(args.source_file)
     verify_manifest_sources(manifest, source_paths)
     specs = _selected_specs(provenance, args.max_conditions)

@@ -22,7 +22,7 @@ import torch
 
 from src.experiments.dataset_manifests import verify_manifest
 from src.experiments.experiment_provenance import (
-    _identity, iter_verified_samples, make_preprocessing_spec,
+    PROVENANCE_SCHEMA, _identity, iter_verified_samples, make_preprocessing_spec,
 )
 from src.experiments.run_representation_image import AttackSpec, run_representation_image
 from src.utils.metric_records import MetricJSONLWriter
@@ -118,10 +118,15 @@ def _check_provenance(manifest: dict, provenance: dict, *, manifest_role: str,
     if not isinstance(provenance, dict):
         raise ValueError("Missing experiment provenance")
     body = {k: v for k, v in provenance.items() if k != "experiment_id"}
-    if provenance.get("schema_version") != 1:
+    if provenance.get("schema_version") != PROVENANCE_SCHEMA:
         raise ValueError("Unsupported experiment provenance schema")
     if provenance.get("experiment_id") != _identity(body):
         raise ValueError("Experiment provenance checksum mismatch")
+    revisions = provenance.get("model_source_revisions")
+    if (not isinstance(revisions, dict) or set(revisions) != {"dinov2", "dinov3"} or
+            any(not isinstance(rev, str) or re.fullmatch(r"[0-9a-f]{40,64}", rev) is None
+                for rev in revisions.values())):
+        raise ValueError("Experiment lacks pinned official DINO source revisions")
     if provenance.get("preprocessing") != preprocessing:
         raise ValueError("Preprocessing differs from frozen experiment")
     if provenance.get("dataset_manifests", {}).get(manifest_role) != manifest["manifest_id"]:

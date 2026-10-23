@@ -20,7 +20,7 @@ from typing import Iterator
 
 from src.experiments.dataset_manifests import sha256_file, verify_manifest
 
-PROVENANCE_SCHEMA = 1
+PROVENANCE_SCHEMA = 2
 PREPROCESSING_SCHEMA = 1
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 
@@ -221,6 +221,7 @@ def build_experiment_provenance(
     attack_settings: list[dict],
     evaluation_protocol: dict,
     git_repo_root: Path,
+    model_sources: dict[str, Path],
 ) -> dict:
     """Generate immutable identifiers from source manifests, weights and code.
 
@@ -233,6 +234,15 @@ def build_experiment_provenance(
     for manifest in manifests.values():
         verify_manifest(manifest)
     _validate_attack_settings(attack_settings)
+    if not isinstance(model_sources, dict) or set(model_sources) != {"dinov2", "dinov3"}:
+        raise ValueError("Both official DINO source repositories must be specified")
+    source_revisions = {}
+    for name, source_path in sorted(model_sources.items()):
+        checkout = Path(source_path)
+        if not (checkout / "hubconf.py").is_file() or not (checkout / name / "__init__.py").is_file():
+            raise ValueError(f"Missing official {name} source checkout: {checkout}")
+        # Reject dirty checkouts; exact revision is included in experiment_id.
+        source_revisions[name] = _git_revision(checkout)
     if not isinstance(preprocessing, dict) or preprocessing.get("schema_version") != PREPROCESSING_SCHEMA:
         raise ValueError("Invalid preprocessing specification")
     preprocessing_body = {key: value for key, value in preprocessing.items() if key != "preprocessing_id"}
@@ -254,6 +264,7 @@ def build_experiment_provenance(
     body = {
         "schema_version": PROVENANCE_SCHEMA,
         "git_revision": _git_revision(git_repo_root),
+        "model_source_revisions": source_revisions,
         "dataset_manifests": {key: row["manifest_id"] for key, row in sorted(manifests.items())},
         "checkpoints": weights,
         "preprocessing": preprocessing,
@@ -269,6 +280,12 @@ def write_experiment_provenance(path: Path, provenance: dict) -> None:
     """Never overwrite an existing experiment configuration with new content."""
     if not isinstance(provenance, dict) or provenance.get("schema_version") != PROVENANCE_SCHEMA:
         raise ValueError("Invalid experiment provenance")
+    source_revisions = provenance.get("model_source_revisions")
+    if (not isinstance(source_revisions, dict) or
+            set(source_revisions) != {"dinov2", "dinov3"} or
+            any(not isinstance(rev, str) or re.fullmatch(r"[0-9a-f]{40,64}", rev) is None
+                for rev in source_revisions.values())):
+        raise ValueError("Missing or invalid pinned official DINO source revisions")
     body = {key: value for key, value in provenance.items() if key != "experiment_id"}
     if provenance.get("experiment_id") != _identity(body):
         raise ValueError("Experiment provenance checksum mismatch")
