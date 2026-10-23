@@ -1,6 +1,7 @@
 import torch
 
 from src.models.checkpoint_paths import checkpoint_file
+from src.models.hub_source import hub_source_kwargs
 
 
 # REPO_DIR = "C:/Users/10031/.cache/torch/hub/facebookresearch_dinov3_main"
@@ -72,7 +73,7 @@ def load_dinov3(model_name, device, checkpoint_path=None):
         checkpoint_path = get_checkpoint(model_name)
 
     model = torch.hub.load(
-        repo_or_dir="facebookresearch/dinov3",
+        **hub_source_kwargs("dinov3"),
         # repo_or_dir=REPO_DIR,
         model=model_name,
         weights=str(checkpoint_path),
@@ -103,7 +104,7 @@ def load_dinov3_downstream(task, device):
     downstream_weight = get_downstream_checkpoint(task)
 
     model = torch.hub.load(
-        repo_or_dir="facebookresearch/dinov3",
+        **hub_source_kwargs("dinov3"),
         model=downstream_models[task],
         weights=str(downstream_weight),
         backbone_weights=str(backbone_weight),

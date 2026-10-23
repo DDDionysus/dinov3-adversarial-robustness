@@ -1,6 +1,7 @@
 import torch
 
 from src.models.checkpoint_paths import checkpoint_file
+from src.models.hub_source import hub_source_kwargs
 
 
 def get_checkpoint(model_name):
@@ -48,7 +49,7 @@ def load_dinov2(model_name, device, checkpoint_path=None):
         checkpoint_path = get_checkpoint(model_name)
 
     model = torch.hub.load(
-        repo_or_dir="facebookresearch/dinov2",
+        **hub_source_kwargs("dinov2"),
         model=model_name,
         weights=str(checkpoint_path),
     )
