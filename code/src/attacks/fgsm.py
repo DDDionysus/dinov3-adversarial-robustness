@@ -51,16 +51,14 @@ def fgsm_attack(model, normalisation, x, epsilon, objective="cls"):
     else:
         raise ValueError(f"Unknown attack objective: {objective}")
 
-    loss.backward()
-
-    grad = x_adv.grad
+    grad = torch.autograd.grad(loss, x_adv)[0]
 
     print("Loss:", loss.item())
     print("Grad abs mean:", grad.abs().mean().item())
     print("Grad abs max:", grad.abs().max().item())
     print("Nonzero grad:", (grad != 0).float().mean().item())
 
-    perturbation = epsilon * x_adv.grad.sign()
+    perturbation = epsilon * grad.sign()
 
     # minimise cosine similarity or maximise mse
     x_adv = x_adv + direction * perturbation
@@ -71,7 +69,7 @@ def fgsm_attack(model, normalisation, x, epsilon, objective="cls"):
     return x_adv
 
 
-def rfgsm_attack(model, normalisation, x, epsilon, seed, objective="cls"):
+def rfgsm_attack(model, normalisation, x, epsilon, seed, objective="cls", clean_features=None):
     """
     Generate an adversarial example using random-start FGSM, for representation-level.
 
@@ -103,9 +101,17 @@ def rfgsm_attack(model, normalisation, x, epsilon, seed, objective="cls"):
     x_adv = torch.clamp(x_clean + delta, 0.0, 1.0).detach()
     x_adv.requires_grad_(True)
 
-    # detach the clean representation so gradients are computed only through x_adv
-    with torch.no_grad():
-        clean_cls, clean_patch = extract_features(model, normalisation(x_clean))
+    # Reuse one detached clean representation across all attacks for an image.
+    # Callers not using the new runner retain the original behavior.
+    if clean_features is None:
+        with torch.no_grad():
+            clean_cls, clean_patch = extract_features(model, normalisation(x_clean))
+    else:
+        clean_cls, clean_patch = clean_features
+        if clean_cls.requires_grad or clean_patch.requires_grad:
+            raise ValueError("Cached clean features must be detached")
+        if clean_cls.shape[0] != x_clean.shape[0] or clean_patch.shape[0] != x_clean.shape[0]:
+            raise ValueError("Cached clean feature batch does not match attack input")
 
     adv_cls, adv_patch = extract_features(model, normalisation(x_adv))
 
@@ -124,9 +130,9 @@ def rfgsm_attack(model, normalisation, x, epsilon, seed, objective="cls"):
     else:
         raise ValueError(f"Unknown attack objective: {objective}")
 
-    loss.backward()
+    grad = torch.autograd.grad(loss, x_adv)[0]
 
-    perturbation = epsilon * x_adv.grad.sign()
+    perturbation = epsilon * grad.sign()
 
     # minimise cosine similarity or maximise mse
     x_adv = x_adv + direction * perturbation

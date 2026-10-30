@@ -7,7 +7,7 @@ from src.utils.random import generate_random_delta
 from src.utils.upsampling import upsampling
 
 
-def pgd_attack(model, normalisation, x, epsilon, alpha, steps, seed, objective="cls"):
+def pgd_attack(model, normalisation, x, epsilon, alpha, steps, seed, objective="cls", clean_features=None):
     """
     Generate an adversarial example using PGD, for representation-level.
 
@@ -39,9 +39,17 @@ def pgd_attack(model, normalisation, x, epsilon, alpha, steps, seed, objective="
 
     x_adv = torch.clamp(x_clean + delta, 0.0, 1.0).detach()
 
-    # detach the clean representation so gradients are computed only through x_adv
-    with torch.no_grad():
-        clean_cls, clean_patch = extract_features(model, normalisation(x_clean))
+    # Reuse one detached clean representation across all attacks for an image.
+    # Callers not using the new runner retain the original behavior.
+    if clean_features is None:
+        with torch.no_grad():
+            clean_cls, clean_patch = extract_features(model, normalisation(x_clean))
+    else:
+        clean_cls, clean_patch = clean_features
+        if clean_cls.requires_grad or clean_patch.requires_grad:
+            raise ValueError("Cached clean features must be detached")
+        if clean_cls.shape[0] != x_clean.shape[0] or clean_patch.shape[0] != x_clean.shape[0]:
+            raise ValueError("Cached clean feature batch does not match attack input")
 
     for _ in range(steps):
         x_adv.requires_grad_(True)
@@ -62,10 +70,10 @@ def pgd_attack(model, normalisation, x, epsilon, alpha, steps, seed, objective="
         else:
             raise ValueError(f"Unknown attack objective: {objective}")
 
-        loss.backward()
+        grad = torch.autograd.grad(loss, x_adv)[0]
 
         # minimise similarity
-        perturbation = alpha * x_adv.grad.sign()
+        perturbation = alpha * grad.sign()
 
         x_adv = x_adv + direction * perturbation
 

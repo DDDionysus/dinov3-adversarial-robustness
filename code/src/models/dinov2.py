@@ -1,6 +1,7 @@
-from pathlib import Path
-
 import torch
+
+from src.models.checkpoint_paths import checkpoint_file
+from src.models.hub_source import hub_source_kwargs
 
 
 def get_checkpoint(model_name):
@@ -16,12 +17,9 @@ def get_checkpoint(model_name):
             Path to pretrained DINOv2 model checkpoint.
     """
 
-    project_root = Path(__file__).resolve().parents[3]
     checkpoints = {
-        "dinov2_vits14": project_root / "checkpoints/backbones/dinov2/dinov2_vits14_pretrain.pth",
-        "dinov2_vitl14": project_root / "checkpoints/backbones/dinov2/dinov2_vitl14_pretrain.pth"
-
-        # "dinov2_vitg": project_root / ""
+        "dinov2_vits14": "dinov2_vits14_pretrain.pth",
+        "dinov2_vitl14": "dinov2_vitl14_pretrain.pth",
     }
 
     if model_name not in checkpoints:
@@ -29,7 +27,7 @@ def get_checkpoint(model_name):
             f"Unsupported DINOv2 model: {model_name}"
         )
 
-    return checkpoints[model_name]
+    return checkpoint_file(checkpoints[model_name])
 
 
 def load_dinov2(model_name, device, checkpoint_path=None):
@@ -51,12 +49,14 @@ def load_dinov2(model_name, device, checkpoint_path=None):
         checkpoint_path = get_checkpoint(model_name)
 
     model = torch.hub.load(
-        repo_or_dir="facebookresearch/dinov2",
+        **hub_source_kwargs("dinov2"),
         model=model_name,
         weights=str(checkpoint_path),
     )
 
     model = model.to(device)
     model.eval()
+    # Keep parameters fixed while allowing gradients with respect to the input.
+    model.requires_grad_(False)
 
     return model
